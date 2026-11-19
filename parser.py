@@ -64,6 +64,7 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
     
     try:
         genai.configure(api_key=api_key)
+        # Use flash model for fast and accurate image OCR
         model = genai.GenerativeModel("gemini-1.5-flash")
         
         prompt = (
