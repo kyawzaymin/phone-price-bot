@@ -135,7 +135,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if not items:
         await update.message.reply_text(
-            f"⚠️ ဓာတ်ပုံထဲမှ စာသားဖတ်၍ မရပါခင်ဗျာ။ (API Key သတ်မှတ်ထားခြင်း ရှိ/မရှိ စစ်ဆေးပါ)\n"
+            f"⚠️ ဓာတ်ပုံထဲမှ စာသားဖတ်၍ မရပါခင်ဗျာ။\n"
             f"ကျေးဇူးပြု၍ စာသားဖြင့် ပို့ပေးပါရန် မေတ္တာရပ်ခံပါသည်။",
             reply_markup=get_main_keyboard()
         )
@@ -226,7 +226,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
-    print("Bot is running with Buttons and Image OCR...")
+    print("Bot is running with Groq Vision...")
     app.run_polling()
 
 if __name__ == "__main__":
