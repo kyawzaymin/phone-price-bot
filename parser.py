@@ -1,8 +1,10 @@
 import os
+import io
 import re
 import json
 import base64
 import unicodedata
+from PIL import Image
 import httpx
 
 MY_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
@@ -58,22 +60,31 @@ def parse_price_text(text, supplier="Supplier"):
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if not groq_key:
-        print("ERROR: GROQ_API_KEY is missing in environment variables.")
+        print("ERROR: GROQ_API_KEY is missing in Railway Variables.")
         return []
     
     try:
-        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+        # Resize image if too large for faster API processing
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        max_size = (1800, 1800)
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        b64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {groq_key}",
             "Content-Type": "application/json"
         }
         prompt = (
-            "You are an expert mobile phone price list OCR parser. Extract all device models, "
-            "RAM/storage, color, region/spec, and integer price in MMK (Myanmar Kyats) from this price list image. "
-            "Return ONLY a valid JSON object in this exact format: "
-            "{\"items\": [{\"model\": \"Redmi K100 Pro\", \"ram_storage\": \"12/256\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 2910000, \"stock_status\": \"instock\"}]}. "
-            "Set stock_status to 'oos' if marked 'ကုန်', otherwise 'instock'."
+            "You are an expert mobile phone price list OCR parser. Analyze this price list image and extract all rows. "
+            "Return ONLY a clean JSON object in this exact format: "
+            "{\"items\": [{\"model\": \"Redmi Note 17\", \"ram_storage\": \"8/128\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 1070000, \"stock_status\": \"instock\"}]}. "
+            "Extract every phone model, RAM/ROM, color, and price. Convert price to integer without commas. Set stock_status to 'oos' if marked 'ကုန်', otherwise 'instock'."
         )
         payload = {
             "model": "llama-3.2-11b-vision-preview",
@@ -91,9 +102,14 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
         }
         resp = httpx.post(url, headers=headers, json=payload, timeout=60.0)
         res_json = resp.json()
-        content = res_json["choices"][0]["message"]["content"]
-        data = json.loads(content)
-        return data.get("items", [])
+        
+        if "choices" in res_json:
+            content = res_json["choices"][0]["message"]["content"]
+            data = json.loads(content)
+            return data.get("items", [])
+        else:
+            print(f"Groq API Response Error: {res_json}")
+            return []
     except Exception as e:
-        print(f"Vision OCR Error: {e}")
+        print(f"Vision OCR Exception: {e}")
         return []
