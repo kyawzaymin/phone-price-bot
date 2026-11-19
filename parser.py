@@ -1,10 +1,9 @@
 import os
-import io
 import re
 import json
+import base64
 import unicodedata
-from PIL import Image
-import google.generativeai as genai
+import httpx
 
 MY_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
 
@@ -57,36 +56,45 @@ def parse_price_text(text, supplier="Supplier"):
     return items
 
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("GEMINI_API_KEY is not set.")
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        print("GROQ_API_KEY is not set.")
         return []
     
     try:
-        genai.configure(api_key=api_key)
-        # Use flash model for fast and accurate image OCR
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
+        }
         prompt = (
-            "Extract all phone/device models, RAM/storage, color, region/spec, and prices from this supplier price list image. "
-            "Return ONLY a valid JSON object with key 'items' containing an array of objects. Each object must have: "
-            "'model' (e.g. Redmi K100 Pro, Note 17, CIVI 3), 'ram_storage' (e.g. 12/256, 8/128, 4/64), "
-            "'color' (e.g. Black, Blue, Coffee, Standard), 'region' (e.g. Global, Global Change, China PI, Activated), "
-            "'price' (integer MMK price only, e.g. 2910000; null if missing), "
-            "'stock_status' ('oos' if marked ကုန် or out of stock, otherwise 'instock')."
+            "You are an expert mobile phone price list OCR analyzer. "
+            "Extract all device models, RAM/storage (e.g. 12/256, 8/128, 4/64), color (e.g. Black, Blue, Green, Coffee), "
+            "region/spec (e.g. Activated, Global, Global Change, China PI), and integer price in MMK (Myanmar Kyats). "
+            "Return ONLY a clean JSON object with key 'items' containing array of objects: "
+            "{\"items\": [{\"model\": \"Redmi K100 Pro\", \"ram_storage\": \"12/256\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 2910000, \"stock_status\": \"instock\"}]}. "
+            "Set stock_status to 'oos' if marked 'ကုန်', otherwise 'instock'."
         )
-        
-        image = Image.open(io.BytesIO(image_bytes))
-        response = model.generate_content([prompt, image])
-        text_resp = response.text.strip()
-        
-        if text_resp.startswith("```json"):
-            text_resp = text_resp[7:-3].strip()
-        elif text_resp.startswith("```"):
-            text_resp = text_resp[3:-3].strip()
-            
-        data = json.loads(text_resp)
+        payload = {
+            "model": "llama-3.2-11b-vision-preview",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}
+                    ]
+                }
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1
+        }
+        resp = httpx.post(url, headers=headers, json=payload, timeout=60.0)
+        res_json = resp.json()
+        content = res_json["choices"][0]["message"]["content"]
+        data = json.loads(content)
         return data.get("items", [])
     except Exception as e:
-        print(f"Error parsing image with Gemini: {e}")
+        print(f"Vision OCR Error: {e}")
         return []
