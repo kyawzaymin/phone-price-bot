@@ -60,15 +60,15 @@ def parse_price_text(text, supplier="Supplier"):
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if not groq_key:
-        print("ERROR: GROQ_API_KEY is missing in Railway Variables.")
+        print("ERROR: GROQ_API_KEY is not configured.")
         return []
     
     try:
-        # Resize image if too large for faster API processing
+        # Resize image for optimal vision API processing
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode != "RGB":
             img = img.convert("RGB")
-        max_size = (1800, 1800)
+        max_size = (1600, 1600)
         img.thumbnail(max_size, Image.Resampling.LANCZOS)
         
         buffer = io.BytesIO()
@@ -80,12 +80,16 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
             "Authorization": f"Bearer {groq_key}",
             "Content-Type": "application/json"
         }
+        
         prompt = (
-            "You are an expert mobile phone price list OCR parser. Analyze this price list image and extract all rows. "
-            "Return ONLY a clean JSON object in this exact format: "
+            "You are a professional price list data extractor. "
+            "Examine this mobile phone supplier price list image carefully. "
+            "Extract every phone and tablet model row with its RAM/Storage, Color, and Price in Myanmar Kyat (MMK). "
+            "Return ONLY a clean JSON array of objects inside an 'items' key, formatted as: "
             "{\"items\": [{\"model\": \"Redmi Note 17\", \"ram_storage\": \"8/128\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 1070000, \"stock_status\": \"instock\"}]}. "
-            "Extract every phone model, RAM/ROM, color, and price. Convert price to integer without commas. Set stock_status to 'oos' if marked 'ကုန်', otherwise 'instock'."
+            "Price must be an integer without commas. Set stock_status to 'oos' if marked 'ကုန်', else 'instock'."
         )
+        
         payload = {
             "model": "llama-3.2-11b-vision-preview",
             "messages": [
@@ -97,19 +101,29 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
                     ]
                 }
             ],
-            "response_format": {"type": "json_object"},
             "temperature": 0.1
         }
+        
         resp = httpx.post(url, headers=headers, json=payload, timeout=60.0)
         res_json = resp.json()
         
         if "choices" in res_json:
-            content = res_json["choices"][0]["message"]["content"]
-            data = json.loads(content)
-            return data.get("items", [])
+            raw_content = res_json["choices"][0]["message"]["content"].strip()
+            
+            # Extract JSON block from markdown if present
+            if "```" in raw_content:
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_content)
+                if match:
+                    raw_content = match.group(1).strip()
+            
+            data = json.loads(raw_content)
+            if isinstance(data, dict):
+                return data.get("items", [])
+            elif isinstance(data, list):
+                return data
         else:
-            print(f"Groq API Response Error: {res_json}")
+            print("Groq API Error Response:", res_json)
             return []
     except Exception as e:
-        print(f"Vision OCR Exception: {e}")
+        print(f"Error during vision OCR processing: {e}")
         return []
