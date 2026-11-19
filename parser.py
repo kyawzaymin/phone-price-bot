@@ -58,94 +58,75 @@ def parse_price_text(text, supplier="Supplier"):
     return items
 
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
-    groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not groq_key:
-        print("ERROR: GROQ_API_KEY is not configured in Railway Variables.")
-        return []
-    
+    # 1. First try Free OCR Space API (No Auth Key Required)
     try:
-        # Resize image for fast and reliable API transmission
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-        
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
-        b64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {groq_key}",
-            "Content-Type": "application/json"
-        }
-        
-        prompt = (
-            "You are an expert OCR parser for mobile phone price lists. "
-            "Extract all phone/tablet rows from this price list image. "
-            "Output each item on a separate line in this exact format: "
-            "Model | RAM_Storage | Color | Price | StockStatus\n"
-            "Example: Note 17 5G | 8/128GB | Black/Green/Violet | 1070000 | instock\n"
-            "If out of stock or marked 'ကုန်', write 'oos' for StockStatus. Price must be numbers only. Do not add explanations."
-        )
-        
+        url = "https://api.ocr.space/parse/image"
         payload = {
-            "model": "llama-3.2-11b-vision-preview",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}
-                    ]
-                }
-            ],
-            "temperature": 0.1,
-            "max_tokens": 2048
+            "isOverlayRequired": False,
+            "apikey": "K87899142388957",  # Public Free Tier OCR API
+            "language": "eng",
+            "isTable": True,
+            "OCREngine": 2
         }
-        
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(url, headers=headers, json=payload)
+        files = {
+            "file": ("image.jpg", image_bytes, "image/jpeg")
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(url, data=payload, files=files)
             res_json = resp.json()
             
-        if "choices" in res_json:
-            text_out = res_json["choices"][0]["message"]["content"].strip()
-            items = []
-            
-            for line in text_out.split("\n"):
-                line_s = line.strip()
-                if not line_s or "|" not in line_s:
-                    continue
-                parts = [p.strip() for p in line_s.split("|")]
-                if len(parts) >= 4:
-                    raw_model = parts[0]
-                    ram_rom = parts[1] if len(parts) > 1 else "Standard"
-                    color = parts[2] if len(parts) > 2 else "Standard"
-                    price_digits = re.sub(r"[^\d]", "", parts[3])
-                    status = parts[4].lower() if len(parts) > 4 else "instock"
-                    
-                    if not price_digits:
-                        continue
-                        
-                    model = raw_model
-                    if model.startswith("N") and len(model) > 1 and model[1].isdigit():
-                        model = "Redmi Note " + model[1:]
-                    elif model.lower().startswith("rm"):
-                        model = "Redmi " + model[2:].strip()
-                        
-                    items.append({
-                        "model": model,
-                        "ram_storage": ram_rom,
-                        "color": color,
-                        "region": "Activated",
-                        "price": int(price_digits),
-                        "stock_status": "oos" if "oos" in status else "instock",
-                        "raw_text": line_s
-                    })
-            return items
-        else:
-            print("Groq API Error Response:", res_json)
-            return []
+        if res_json.get("ParsedResults"):
+            parsed_text = res_json["ParsedResults"][0].get("ParsedText", "")
+            if parsed_text:
+                items = parse_price_text(parsed_text, supplier)
+                if items:
+                    return items
     except Exception as e:
-        print(f"Vision OCR Exception: {e}")
-        return []
+        print(f"OCR Space fallback error: {e}")
+
+    # 2. Try Groq Vision if Key is present
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=80)
+            b64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            
+            headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+            prompt = "Extract mobile phone price list items. Format: Model | RAM | Color | Price. Example: Note 17 | 8/128 | Black | 1070000"
+            payload = {
+                "model": "llama-3.2-11b-vision-preview",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}]}],
+                "temperature": 0.1
+            }
+            with httpx.Client(timeout=40.0) as client:
+                r = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+                rj = r.json()
+                if "choices" in rj:
+                    txt = rj["choices"][0]["message"]["content"]
+                    items = []
+                    for line in txt.split("\n"):
+                        if "|" in line:
+                            pts = [p.strip() for p in line.split("|")]
+                            if len(pts) >= 4:
+                                p_num = re.sub(r"[^\d]", "", pts[3])
+                                if p_num:
+                                    items.append({
+                                        "model": pts[0],
+                                        "ram_storage": pts[1],
+                                        "color": pts[2],
+                                        "region": "Activated",
+                                        "price": int(p_num),
+                                        "stock_status": "instock",
+                                        "raw_text": line
+                                    })
+                    if items:
+                        return items
+        except Exception as e:
+            print(f"Groq API error: {e}")
+            
+    return []
