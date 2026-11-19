@@ -60,16 +60,15 @@ def parse_price_text(text, supplier="Supplier"):
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if not groq_key:
-        print("ERROR: GROQ_API_KEY is not configured.")
+        print("ERROR: GROQ_API_KEY is not configured in Railway Variables.")
         return []
     
     try:
-        # Resize image for optimal vision API processing
+        # Resize image for fast and reliable API transmission
         img = Image.open(io.BytesIO(image_bytes))
         if img.mode != "RGB":
             img = img.convert("RGB")
-        max_size = (1600, 1600)
-        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        img.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
         
         buffer = io.BytesIO()
         img.save(buffer, format="JPEG", quality=85)
@@ -82,12 +81,12 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
         }
         
         prompt = (
-            "You are a professional price list data extractor. "
-            "Examine this mobile phone supplier price list image carefully. "
-            "Extract every phone and tablet model row with its RAM/Storage, Color, and Price in Myanmar Kyat (MMK). "
-            "Return ONLY a clean JSON array of objects inside an 'items' key, formatted as: "
-            "{\"items\": [{\"model\": \"Redmi Note 17\", \"ram_storage\": \"8/128\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 1070000, \"stock_status\": \"instock\"}]}. "
-            "Price must be an integer without commas. Set stock_status to 'oos' if marked 'ကုန်', else 'instock'."
+            "You are an expert OCR parser for mobile phone price lists. "
+            "Extract all phone/tablet rows from this price list image. "
+            "Output each item on a separate line in this exact format: "
+            "Model | RAM_Storage | Color | Price | StockStatus\n"
+            "Example: Note 17 5G | 8/128GB | Black/Green/Violet | 1070000 | instock\n"
+            "If out of stock or marked 'ကုန်', write 'oos' for StockStatus. Price must be numbers only. Do not add explanations."
         )
         
         payload = {
@@ -101,29 +100,52 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
                     ]
                 }
             ],
-            "temperature": 0.1
+            "temperature": 0.1,
+            "max_tokens": 2048
         }
         
-        resp = httpx.post(url, headers=headers, json=payload, timeout=60.0)
-        res_json = resp.json()
-        
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            res_json = resp.json()
+            
         if "choices" in res_json:
-            raw_content = res_json["choices"][0]["message"]["content"].strip()
+            text_out = res_json["choices"][0]["message"]["content"].strip()
+            items = []
             
-            # Extract JSON block from markdown if present
-            if "```" in raw_content:
-                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_content)
-                if match:
-                    raw_content = match.group(1).strip()
-            
-            data = json.loads(raw_content)
-            if isinstance(data, dict):
-                return data.get("items", [])
-            elif isinstance(data, list):
-                return data
+            for line in text_out.split("\n"):
+                line_s = line.strip()
+                if not line_s or "|" not in line_s:
+                    continue
+                parts = [p.strip() for p in line_s.split("|")]
+                if len(parts) >= 4:
+                    raw_model = parts[0]
+                    ram_rom = parts[1] if len(parts) > 1 else "Standard"
+                    color = parts[2] if len(parts) > 2 else "Standard"
+                    price_digits = re.sub(r"[^\d]", "", parts[3])
+                    status = parts[4].lower() if len(parts) > 4 else "instock"
+                    
+                    if not price_digits:
+                        continue
+                        
+                    model = raw_model
+                    if model.startswith("N") and len(model) > 1 and model[1].isdigit():
+                        model = "Redmi Note " + model[1:]
+                    elif model.lower().startswith("rm"):
+                        model = "Redmi " + model[2:].strip()
+                        
+                    items.append({
+                        "model": model,
+                        "ram_storage": ram_rom,
+                        "color": color,
+                        "region": "Activated",
+                        "price": int(price_digits),
+                        "stock_status": "oos" if "oos" in status else "instock",
+                        "raw_text": line_s
+                    })
+            return items
         else:
             print("Groq API Error Response:", res_json)
             return []
     except Exception as e:
-        print(f"Error during vision OCR processing: {e}")
+        print(f"Vision OCR Exception: {e}")
         return []
