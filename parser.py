@@ -58,12 +58,12 @@ def parse_price_text(text, supplier="Supplier"):
     return items
 
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
-    # 1. First try Free OCR Space API (No Auth Key Required)
+    # 1. First priority: Free Direct Table OCR Engine
     try:
         url = "https://api.ocr.space/parse/image"
         payload = {
             "isOverlayRequired": False,
-            "apikey": "K87899142388957",  # Public Free Tier OCR API
+            "apikey": "K87899142388957",
             "language": "eng",
             "isTable": True,
             "OCREngine": 2
@@ -71,7 +71,7 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
         files = {
             "file": ("image.jpg", image_bytes, "image/jpeg")
         }
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=25.0) as client:
             resp = client.post(url, data=payload, files=files)
             res_json = resp.json()
             
@@ -82,9 +82,9 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
                 if items:
                     return items
     except Exception as e:
-        print(f"OCR Space fallback error: {e}")
+        print(f"Direct OCR Error: {e}")
 
-    # 2. Try Groq Vision if Key is present
+    # 2. Second fallback: Groq Vision if Key works
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
         try:
@@ -97,13 +97,13 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
             b64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
             
             headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
-            prompt = "Extract mobile phone price list items. Format: Model | RAM | Color | Price. Example: Note 17 | 8/128 | Black | 1070000"
+            prompt = "Extract phone price list items. Format: Model | RAM | Color | Price. Example: Note 17 | 8/128 | Black | 1070000"
             payload = {
                 "model": "llama-3.2-11b-vision-preview",
                 "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}]}],
                 "temperature": 0.1
             }
-            with httpx.Client(timeout=40.0) as client:
+            with httpx.Client(timeout=35.0) as client:
                 r = client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
                 rj = r.json()
                 if "choices" in rj:
@@ -127,6 +127,6 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
                     if items:
                         return items
         except Exception as e:
-            print(f"Groq API error: {e}")
-            
+            print(f"Groq API fallback error: {e}")
+
     return []
