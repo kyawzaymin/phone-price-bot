@@ -58,7 +58,7 @@ def parse_price_text(text, supplier="Supplier"):
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if not groq_key:
-        print("GROQ_API_KEY is not set.")
+        print("CRITICAL: GROQ_API_KEY is not set.")
         return []
     
     try:
@@ -69,12 +69,11 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
             "Content-Type": "application/json"
         }
         prompt = (
-            "You are an expert mobile phone price list OCR analyzer. "
-            "Extract all device models, RAM/storage (e.g. 12/256, 8/128, 4/64), color (e.g. Black, Blue, Green, Coffee), "
-            "region/spec (e.g. Activated, Global, Global Change, China PI), and integer price in MMK (Myanmar Kyats). "
-            "Return ONLY a clean JSON object with key 'items' containing array of objects: "
+            "You are an expert mobile price list OCR parser. Extract all device models, "
+            "RAM/storage, color, region/spec, and integer price in MMK from this image. "
+            "Return ONLY a valid JSON object in format: "
             "{\"items\": [{\"model\": \"Redmi K100 Pro\", \"ram_storage\": \"12/256\", \"color\": \"Black\", \"region\": \"Activated\", \"price\": 2910000, \"stock_status\": \"instock\"}]}. "
-            "Set stock_status to 'oos' if marked 'ကုန်', otherwise 'instock'."
+            "Set stock_status to 'oos' if marked 'ကုန်', else 'instock'."
         )
         payload = {
             "model": "llama-3.2-11b-vision-preview",
@@ -96,5 +95,5 @@ def parse_image_with_vision(image_bytes, supplier="Supplier"):
         data = json.loads(content)
         return data.get("items", [])
     except Exception as e:
-        print(f"Vision OCR Error: {e}")
+        print(f"Groq Vision Error: {e}")
         return []
