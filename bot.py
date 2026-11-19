@@ -135,7 +135,7 @@ async def handle_photo_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if not items:
         await update.message.reply_text(
-            f"⚠️ ဓာတ်ပုံထဲမှ စာသားဖတ်၍ မရပါ (သို့မဟုတ် GEMINI_API_KEY မသတ်မှတ်ရသေးပါ)။\n"
+            f"⚠️ ဓာတ်ပုံထဲမှ စာသားဖတ်၍ မရပါခင်ဗျာ။ (API Key သတ်မှတ်ထားခြင်း ရှိ/မရှိ စစ်ဆေးပါ)\n"
             f"ကျေးဇူးပြု၍ စာသားဖြင့် ပို့ပေးပါရန် မေတ္တာရပ်ခံပါသည်။",
             reply_markup=get_main_keyboard()
         )
