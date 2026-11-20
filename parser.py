@@ -28,14 +28,11 @@ def parse_price_text(text, supplier="Supplier"):
             current_section = line_s
             continue
             
-        # Match price at end of line (e.g. 1,070,000 or 1070000 or = 1070000)
         p_match = re.search(r"(\d[\d\s,]{4,}\d|\d{5,})", line_s)
         if p_match:
             price_raw = re.sub(r"[^\d]", "", p_match.group(1))
             if len(price_raw) >= 5:
                 before_price = line_s[:p_match.start()].strip().rstrip(":=|").strip()
-                
-                # Check for RAM/Storage pattern: (8/128), 8/128GB, 8+128, 12/256
                 ram_match = re.search(r"\(?(\d{1,2}[\+\/]\d{2,3}(?:gb|GB|g|G)?)\)?", before_price)
                 if ram_match:
                     ram_storage = ram_match.group(1)
@@ -68,30 +65,26 @@ def parse_price_text(text, supplier="Supplier"):
     return items
 
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
-    # Multi-engine online OCR
-    for engine in [2, 1]:
-        try:
-            url = "https://api.ocr.space/parse/image"
-            payload = {
-                "isOverlayRequired": False,
-                "apikey": "K87899142388957",
-                "language": "eng",
-                "isTable": True,
-                "OCREngine": engine,
-                "scale": True,
-                "detectOrientation": True
-            }
-            files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
-            with httpx.Client(timeout=25.0) as client:
-                r = client.post(url, data=payload, files=files)
-                rj = r.json()
-                if rj.get("ParsedResults"):
-                    txt = rj["ParsedResults"][0].get("ParsedText", "")
-                    if txt:
-                        items = parse_price_text(txt, supplier)
-                        if items:
-                            return items
-        except Exception:
-            pass
+    # Multi-engine OCR with direct image decoding
+    try:
+        url = "https://api.ocr.space/parse/image"
+        payload = {
+            "apikey": "K87899142388957",
+            "language": "eng",
+            "isTable": True,
+            "OCREngine": 2,
+            "scale": True,
+            "detectOrientation": True
+        }
+        files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(url, data=payload, files=files)
+            res_json = resp.json()
+            if res_json.get("ParsedResults"):
+                parsed_text = res_json["ParsedResults"][0].get("ParsedText", "")
+                if parsed_text:
+                    return parse_price_text(parsed_text, supplier)
+    except Exception as e:
+        print(f"OCR Error: {e}")
 
     return []
