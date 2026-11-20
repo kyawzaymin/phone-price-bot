@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 
 DB_PATH = os.getenv("DB_PATH", "prices.db")
 
@@ -44,25 +45,42 @@ def get_best_supplier(query):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    q = f"%{query.strip()}%"
+    
+    # Clean query and search terms
+    q_clean = query.strip().lower()
+    terms = q_clean.split()
+    
     cur.execute("""
     SELECT * FROM quotes 
-    WHERE (model LIKE ? OR raw_text LIKE ?) 
-      AND stock_status != 'oos' 
+    WHERE stock_status != 'oos' 
       AND price IS NOT NULL AND price > 0
     ORDER BY price ASC
-    """, (q, q))
-    rows = cur.fetchall()
+    """)
+    all_rows = cur.fetchall()
     conn.close()
-    if not rows:
+    
+    matched_rows = []
+    for r in all_rows:
+        text_to_search = f"{r['model']} {r['ram_storage']} {r['color']} {r['raw_text']}".lower()
+        if all(t in text_to_search for t in terms):
+            matched_rows.append(r)
+            
+    if not matched_rows:
+        # Fallback to single term matching
+        for r in all_rows:
+            text_to_search = f"{r['model']} {r['ram_storage']} {r['color']} {r['raw_text']}".lower()
+            if any(t in text_to_search for t in terms if len(t) > 2):
+                matched_rows.append(r)
+                
+    if not matched_rows:
         return None
     
-    best = rows[0]
+    best = matched_rows[0]
     all_prices = {}
-    for r in rows:
+    for r in matched_rows:
         if r["supplier"] not in all_prices:
             all_prices[r["supplier"]] = r["price"]
-    
+            
     savings = 0
     if len(all_prices) > 1:
         sorted_p = sorted([p for p in all_prices.values() if isinstance(p, (int, float))])
