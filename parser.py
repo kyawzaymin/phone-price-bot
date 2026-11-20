@@ -2,10 +2,9 @@ import os
 import io
 import re
 import json
-import base64
 import unicodedata
 from PIL import Image
-import httpx
+import google.generativeai as genai
 
 MY_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
 
@@ -65,26 +64,41 @@ def parse_price_text(text, supplier="Supplier"):
     return items
 
 def parse_image_with_vision(image_bytes, supplier="Supplier"):
-    # Multi-engine OCR with direct image decoding
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        print("ERROR: GEMINI_API_KEY is not set.")
+        return []
+    
     try:
-        url = "https://api.ocr.space/parse/image"
-        payload = {
-            "apikey": "K87899142388957",
-            "language": "eng",
-            "isTable": True,
-            "OCREngine": 2,
-            "scale": True,
-            "detectOrientation": True
-        }
-        files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(url, data=payload, files=files)
-            res_json = resp.json()
-            if res_json.get("ParsedResults"):
-                parsed_text = res_json["ParsedResults"][0].get("ParsedText", "")
-                if parsed_text:
-                    return parse_price_text(parsed_text, supplier)
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        prompt = (
+            "You are an expert phone price list table parser. Examine this supplier price list image carefully. "
+            "It has columns: [Model / Item Name] | [Color] | [Price in MMK]. "
+            "Extract every single phone, tablet, and accessory row. "
+            "Return ONLY a clean JSON object with this exact structure: "
+            "{\"items\": [{\"model\": \"K100 Pro Max\", \"ram_storage\": \"12+256g\", \"color\": \"Blue\", \"region\": \"Activated\", \"price\": 3180000, \"stock_status\": \"instock\"}]}. "
+            "Rules:\n"
+            "1. 'price' must be an integer in MMK without commas (e.g. 3180000).\n"
+            "2. If price is missing or blank, omit the item.\n"
+            "3. If marked 'ကုန်', set 'stock_status': 'oos', otherwise 'instock'.\n"
+            "4. Do NOT output markdown code blocks or extra text."
+        )
+        
+        image = Image.open(io.BytesIO(image_bytes))
+        response = model.generate_content([prompt, image])
+        text_resp = response.text.strip()
+        
+        if "```" in text_resp:
+            text_resp = re.sub(r"```json\s*", "", text_resp)
+            text_resp = re.sub(r"```\s*", "", text_resp).strip()
+            
+        data = json.loads(text_resp)
+        if isinstance(data, dict):
+            return data.get("items", [])
+        elif isinstance(data, list):
+            return data
     except Exception as e:
-        print(f"OCR Error: {e}")
-
-    return []
+        print(f"Gemini Vision parsing error: {e}")
+        return []
